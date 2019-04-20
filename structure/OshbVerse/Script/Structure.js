@@ -1,6 +1,8 @@
 /**
  * @fileOverview Structure is the JavaScript controller for OSHB structure.
- * @version 1.0
+ * @version 1.3
+ * Version 1.3: Updated for entire WLC, verse layout and depth.
+ * Version 1.2: Updated for popup display.
  * @author David
  */
 (function() {
@@ -10,6 +12,8 @@
         "chapter": document.getElementById('chapter'),
         "verse": document.getElementById('verse'),
         "display": document.getElementById('display'),
+        "verseLayout": document.getElementById('verseLayout'),
+        "levelDepth": document.getElementById('levelDepth')
     };
 // Utility functions.
     // Utility function to clear child nodes from an element.
@@ -20,7 +24,7 @@
     };
 // XML handling.
     var chapterXml;
-    // Parses the XML string into an DOM document.
+    // Parses the XML string into a DOM document.
     var parseXmlString = function(xml) {
         if (window.DOMParser)
         {
@@ -35,10 +39,27 @@
         }
         return xmlDoc;
     };
+    // From https://developer.mozilla.org/en-US/docs/Web/API/XMLHttpRequest/Synchronous_and_Asynchronous_Requests
+    function xhrSuccess() {
+        this.callback.apply(this, this.arguments);
+    }
+    function xhrError() {
+        console.error(this.statusText);
+    }
+    function loadFile(sURL, fCallback /*, argumentToPass1, argumentToPass2, etc. */) {
+      var oReq = new XMLHttpRequest();
+      oReq.callback = fCallback;
+      oReq.arguments = Array.prototype.slice.call(arguments, 2);
+      oReq.onload = xhrSuccess;
+      oReq.onerror = xhrError;
+      oReq.open("get", sURL, true);
+      oReq.send(null);
+    }
 // Navigation elements.
-    var bookIndex;
+    var bookText, bookIndex;
     // Sets the options for the chapter dropdown.
     var setChapters = function() {
+		bookText = this.responseText;
         bookIndex = books[elements.book.value].split(' ');
         var i = 1, num = parseInt(bookIndex[0]);
         clearNodes(elements.chapter);
@@ -47,29 +68,10 @@
         }
         elements.chapter[initialChapter].selected = "selected";
         initialChapter = 0;
-        setVerses();
-    };
-    // Sets the test file for the demo.
-    var setFile = function() {
-        var book = elements.book.value;
-        var chapter = elements.chapter.value;
-        if (book === 'Gen') {
-            switch (chapter) {
-                case '1':
-                    return chapter0;
-                case '8':
-                    return chapter1;
-                case '32':
-                    return chapter2;
-            }
-        } else if (book === 'Ps' && chapter === '1') {
-            return chapter3;
-        }
-        return chapter0;
+        setChapterFile();
     };
     // Sets the options for the verse dropdown.
     var setVerses = function() {
-        chapterXml = parseXmlString(setFile());
         var i = 1, num = bookIndex[elements.chapter.value];
         clearNodes(elements.verse);
         for (; i <= num; i++) {
@@ -77,118 +79,88 @@
         }
         getVerse();
     };
-    // Constructs the markup for a qere note.
-    var markupQere = function(qere) {
-        var child = qere.getElementsByTagName('rdg')[0].firstChild,
-            markup = ' <span class="qere">';
-        while (child) {
-            switch (child.nodeName) {
-                case 'w':
-                    markup += '<span class="Hebrew" title="';
-                    markup += child.getAttribute('lemma') + '">';
-                    markup += child.firstChild.nodeValue + '</span>';
-                    break;
-                case 'seg':
-                    markup += '<span class="punctuation">';
-                    markup += child.firstChild.nodeValue + '</span>';
-            }
-            child = child.nextSibling;
-        }
-        markup += '</span>';
-        return markup;
+    // Extracts the XML chapter from bookText.
+    var setChapterFile = function() {
+		var xmlString = '<?xml version="1.0" encoding="UTF-8"?>',
+			osisID = elements.book.value + "." + elements.chapter.value,
+			start = bookText.indexOf('<chapter osisID="' + osisID + '"'),
+			end = bookText.indexOf('</chapter>', start) + 10;
+		xmlString += bookText.substring(start, end);
+		chapterXml = parseXmlString(xmlString);
+		setVerses();
     };
-    // Sequences the verse content by structure.
-    var sequenceVerse = function(verse) {
-        var lines = [], markup = '', setLine = false, type;
-        var child = verse.firstChild;
-        while (child) {
-            if (child.nodeType === 3 && markup) {
-                markup += '<span class="punctuation"> </span>';
-            }
-            switch (child.nodeName) {
-                case 'w':
-                    if (setLine) {
-                        lines.push({"code": setLine, "markup": markup});
-                        markup = '';
-                        setLine = false;
-                    }
-                    markup += '<span class="Hebrew" title="';
-                    markup += child.getAttribute('lemma') + '">';
-                    markup += child.firstChild.nodeValue + '</span>';
-                    if (child.hasAttribute('n')) {
-                        setLine = child.getAttribute('n');
-                    }
-                    break;
-                case 'seg':
-                    type = child.getAttribute('type');
-                    if (type === 'x-pe' || type === 'x-samekh') {
-                        markup += '<span class="mark">';
-                        markup += child.firstChild.nodeValue + '</span>';
-                    } else {
-                        markup += '<span class="punctuation">';
-                        markup += child.firstChild.nodeValue + '</span>';
-                    }
-                    break;
-                case 'note':
-                    if (child.hasAttribute('n')) {
-                        markup += '<sup class="note" title="';
-                        markup += child.firstChild.nodeValue + '">';
-                        markup += child.getAttribute('n') + '</sup>';
-                    } else if (child.hasAttribute('type')) {
-                        type = child.getAttribute('type');
-                        if (type === 'variant') {
-                            markup += markupQere(child);
-                        } else if (type === 'alternative') {
-                            markup += '<sup class="note" title="';
-                            markup += child.getElementsByTagName('rdg')[0].firstChild.nodeValue + '">*</sup>';
-                        }
-                    } else {
-                        markup += '<sup class="note" title="';
-                        markup += child.firstChild.nodeValue + '">*</sup>';
-                    }
-            }
-            child = child.nextSibling;
-        }
-        lines.push({"code": setLine, "markup": markup});
-        return lines;
-    };
-    // Recursive function to mark up blocks.
-    var markupBlock = function(lines, level) {
-        var limit = lines.length, markup = '<div class="level' + level + '">';
-        if (limit === 1) {
-            return markup + lines[0]['markup'] + '</div>';
-        }
-        // Recursive breakdown of blocks.
-        var index = 2 * level, block = [], i = 0, test,
-            code = lines[0]['code'].charAt(index);
-        for (; i < limit; i++) {
-            test = lines[i]['code'].charAt(index);
-            if (test !== code) {
-                markup += markupBlock(block, level + 1);
-                block = [];
-                code = test;
-            }
-            block.push(lines[i]);
-        }
-        markup += markupBlock(block, level + 1) + '</div>';
-        return markup;
-    };
+	// Sets the XML book file to read.
+	var setBookFile = function() {
+        var book = elements.book.value;
+        return loadFile("../../wlc/" + book + ".xml", setChapters);
+	};
+// Interface elements.
     // Marks up the verse.
-    var markupVerse = function(verse) {
-        var lines = sequenceVerse(verse);
-        var markup = '<h3>' + verse.getAttribute('osisID') + '</h3>';
-        return markup + markupBlock(lines, 0);
-    };
+    // Interprets the accents.
+    var accentInterpretation = window.accentInterpretation;
     // Gets the selected verse.
-    var getVerse = function() {
+    function getVerse() {
         var index = elements.verse.value - 1;
         var verse = chapterXml.getElementsByTagName('verse')[index];
-        elements.display.innerHTML = markupVerse(verse);
-    };
+        // Set the scope based on the verse ID.
+        accentInterpretation.setAccents(verse.getAttribute('osisID'));
+        clearNodes(elements.display);
+        if (elements.verseLayout.value.indexOf("-bt") > -1) {
+            elements.display.appendChild(markupVerse(verse, true));
+        } else {
+            elements.display.appendChild(markupVerse(verse, false));
+        }
+        setLevelDepth();
+    }
+    // Gets the selected verse layout stylesheet.
+    function getVerseLayout() {
+        var layoutDir, i, link_tag;
+        if (elements.verseLayout.value.startsWith("horizontal")) {
+            layoutDir = "horizontal";
+            markupVerse = window.verseMarkupHorizontal;
+        } else {
+            layoutDir = "vertical";
+            markupVerse = window.verseMarkupVertical;
+        }
+        // Adapted from https://www.thesitewizard.com/javascripts/change-style-sheets.shtml
+        var i, link_tag ;
+        for (i = 0, link_tag = document.getElementsByTagName('link') ;
+            i < link_tag.length ; i++ ) {
+            if ((link_tag[i].rel.indexOf('stylesheet') != -1) && link_tag[i].title) {
+                link_tag[i].disabled = true ;
+                if (link_tag[i].title == layoutDir) {
+                    link_tag[i].disabled = false ;
+                }
+            }
+        }
+        getVerse();
+    }
+    // Sets the visibility of the accents level up to depth.
+    function setLevelDepth() {
+        var i, depth = parseInt(elements.levelDepth.value);
+        if (depth < 0 || depth > 5) {
+            return;
+        }
+        for (i = 0; i <= depth; i++) {
+            var toShow = elements.display.getElementsByClassName("level" + i);
+            for (var j = 0; j < toShow.length; j++) {
+                toShow[j].style.removeProperty("border-style");
+            };
+        }
+        for (i = depth + 1; i <= 5; i++) {
+            var toHide = elements.display.getElementsByClassName("level" + i);
+            for (var j = 0; j < toHide.length; j++) {
+                toHide[j].style.borderStyle = "hidden";
+            }
+        }
+    }
     // Initialize.
     var initialChapter = elements.chapter.value - 1;
-    elements.book.onchange = setChapters;
-    elements.chapter.onchange = setVerses;
+    var markupVerse = window.verseMarkupHorizontal;
+    elements.book.onchange = setBookFile;
+    elements.chapter.onchange = setChapterFile;
     elements.verse.onchange = getVerse;
-    setChapters();
+    elements.verseLayout.onchange = getVerseLayout;
+    elements.levelDepth.onchange = setLevelDepth;
+    setBookFile();
 })();
